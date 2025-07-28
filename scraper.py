@@ -2,8 +2,6 @@ import pandas as pd
 import numpy as np
 from bs4 import BeautifulSoup
 import requests
-import time
-import random
 import os
 import re
 import math
@@ -16,182 +14,115 @@ def Scrape_Wikipedia():
     #https://en.wikipedia.org/wiki/2023_World_Athletics_Championships_%E2%80%93_Men%27s_decathlon
     #https://en.wikipedia.org/wiki/2022_World_Athletics_Championships_%E2%80%93_Men%27s_decathlon
     #https://en.wikipedia.org/wiki/2019_World_Athletics_Championships_%E2%80%93_Men%27s_decathlon
+    
+    #2017 WAC URL is slightly different
     #https://en.wikipedia.org/wiki/2017_World_Championships_in_Athletics_%E2%80%93_Men%27s_decathlon
    
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
+    headers = {"User-Agent": "Mozilla/5.0"}
     
-    event_names = [
-        "100 metres", "Long jump", "Shot put", "High jump", "400 metres",
-        "110 hurdles", "Discus", "Pole vault", "Javelin", "1500 metres"
-    ]
-    athletes = {}
-    years = [2016,2019,2020,2022,2023,2024]
+    event_names = ["100 metres", "Long jump", "Shot put", "High jump", "400 metres",
+        "110 hurdles", "Discus", "Pole vault", "Javelin", "1500 metres"]
+    athletes_data = {}
+    years = [2016,2017,2019,2020,2022,2023,2024]
     for year in years:
         print(year)
-        if year in {2016,2020,2024}:
+        if year == 2017:
+            url = f"https://en.wikipedia.org/wiki/2017_World_Championships_in_Athletics_%E2%80%93_Men%27s_decathlon"
+            competition = "World Athletics Championship"
+        elif year in {2016,2020,2024}:
             url = f"https://en.wikipedia.org/wiki/Athletics_at_the_{year}_Summer_Olympics_%E2%80%93_Men%27s_decathlon"
             competition = "Olympics"
         else:
             url = f"https://en.wikipedia.org/wiki/{year}_World_Athletics_Championships_%E2%80%93_Men%27s_decathlon"
             competition = "World Athletics Championships"
-        if year == 2017:
-            url = "https://en.wikipedia.org/wiki/2017_World_Championships_in_Athletics_%E2%80%93_Men%27s_decathlon"
-            competition = "World Athletics Championship"
         
         response = requests.get(url, headers = headers)
         soup = BeautifulSoup(response.text, "html.parser")
         
-        tables = soup.find_all("table", class_=lambda x: x and "wikitable sortable" in x)
-        
-        for num, table in enumerate(tables[:-1]):
-            print(num)
-            for row in table.tbody.find_all("tr"):
-                results = row.find_all("td")
-                if len(results) < 3:
-                    continue
-                #check for ties
-                
-                name_cell = results[2]
-                name = name_cell.get_text(strip=True)
-                if " " not in name or "(" in name or name == "Czech Republic" or name == "United States":
-                    name_cell = results[1]
-                    name = name_cell.get_text(strip=True)
-                print(name)
-                if num in {0, 4, 5, 9}:
-                    score = ScrapeTrack(results)
-                elif num in {3, 7}:
-                    score = ScrapeHighJumpVault(results)
-                else:
-                    score = ScrapeField(results)
-                name = f"{name} {year} {competition}"
-                if name not in athletes:
-                    athletes[name] = {}
-                athletes[name][event_names[num]] = score
+        athletes_data = Make_Competition_Data(event_names, soup, athletes_data, year, competition)
 
-    
-    df = pd.DataFrame.from_dict(athletes, orient='index')
+    df = pd.DataFrame.from_dict(athletes_data, orient='index')
     df = df.reset_index().rename(columns={'index': 'Name'})
-    header = not os.path.exists("dec_data.csv")
-    df.to_csv("dec_data.csv", mode='a', header=header, index=False)
-
-def Scrape_Wikipedia_2017():
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
-    event_names = [
-        "100 metres", "Long jump", "Shot put", "High jump", "400 metres",
-        "110 hurdles", "Discus", "Pole vault", "Javelin", "1500 metres"
-    ]
-    athletes = {}
-    year = 2017
-    url = "https://en.wikipedia.org/wiki/2017_World_Championships_in_Athletics_%E2%80%93_Men%27s_decathlon"
-    competition = "World Athletics Championship"
+    df = Add_Points(df)
+    df.to_csv("dec_data.csv", mode='w', index=False)
     
-    response = requests.get(url, headers = headers)
-    soup = BeautifulSoup(response.text, "html.parser")
+def Make_Competition_Data(event_names, soup, athletes_data, year, competition):
     tables = soup.find_all("table", class_=lambda x: x and "wikitable sortable" in x)
-    
+
     for num, table in enumerate(tables[:-1]):
         print(num)
         for row in table.tbody.find_all("tr"):
             results = row.find_all("td")
             if len(results) < 3:
                 continue
-            #check for ties
             
-            '''
-            if " " not in name or "(" in name or name == "Czech Republic" or name == "United States":
-                name_cell = results[1]
-                name = name_cell.get_text(strip=True)
-            '''
+            name = None
+            for td in results:
+                if td.get("align") == "left":
+                    name = td.get_text(strip=True)
+                    break
+            if not name:
+                raise ValueError("There is no name")
             
+            #Adam's name has middle name in only 1 event (1500m 2016 Olympics)
+            if name == "Adam Sebastian Helcelet":
+                name = "Adam Helcelet"
+        
+            print(name)
             if num in {0, 4, 5, 9}:
-                if num == 0:
-                    name_cell = results[3]
-                elif num == 4 or num == 5:
-                    name_cell = results[2]
-                elif num == 9:
-                    name_cell = results[1]
-                name = name_cell.get_text(strip=True)
-                print(name)
-                score = ScrapeTrack(results)
+                score = Scrape_Track(results)
             elif num in {3, 7}:
-                for i, tag in enumerate(results):
-                    if tag.text.strip() in {"A", "B"}:
-                        name_cell = results[i+1]
-                name = name_cell.get_text(strip=True)
-                print(name)
-                score = ScrapeHighJumpVault(results)
+                score = Scrape_HighJump_Vault(results)
             else:
-                name_cell = results[2]
-                name = name_cell.get_text(strip=True)
-                print(name)
-                score = ScrapeField(results)
+                score = Scrape_Field(results)
             name = f"{name} {year} {competition}"
-            if name not in athletes:
-                athletes[name] = {}
-            athletes[name][event_names[num]] = score
-
-    df = pd.DataFrame.from_dict(athletes, orient='index')
-    df = df.reset_index().rename(columns={'index': 'Name'})
-    header = not os.path.exists("dec_data.csv")
-    df.to_csv("dec_data2.csv", mode='a', header=header, index=False)
-
-
-#most of the conditionals are unneccsary and could have
-#been formatted much cleaner
-def ScrapeTrack(list):
+            
+            if name not in athletes_data:
+                athletes_data[name] = {}
+            athletes_data[name][event_names[num]] = score
+    return athletes_data
+    
+def Scrape_Track(list):
     global previous
-    try:
-        score = list[5].get_text(strip=True)
-    #if exact tie
-    except:
-        return previous
     
-    if len(list[3].get_text(strip=True)) == 7:
-        score = list[3].get_text(strip=True)
-        seconds = float(score[0])*60
-        seconds = seconds + float(score[2:])
-        previous = seconds
-        #print (seconds)
-        return seconds
+    score = None
+    for i, cell in enumerate(list[:-2]):
+        if cell.get("align") == "left" and list[i+1].get("align") == "left":
+            score = list[i+2].get_text(strip=True)
+            break
     
+    if score in {"NM", "DQ", "DNF", "DNS", "DNS1"}:
+        return None
+        
+    #Later technology has times as 3 decimal places for ties with [14.167]
     if "[" in score:
-        # Extract the main score (before the bracket)
-        main_score = re.match(r"^(\d+\.\d+)\[", score).group(1)
-        return float(main_score)
-    if score in {"NM", "DQ", "DNF", "DNS", "DNS1"}:
-        return None
-    if not score:
-        return None
-    if "." not in score:
-        score = list[4].get_text(strip=True)
-    if score in {"NM", "DQ", "DNF", "DNS", "DNS1"}:
-        return None
-    if "." not in score:
-        score = list[3].get_text(strip=True)
-    #if minutes
+        score = re.match(r"^(\d+\.\d+)\[", score).group(1)
+    
+    #1500m
     if ":" in score:
         seconds = float(score[0])*60
         seconds = seconds + float(score[2:])
         previous = seconds
         #print (seconds)
         return seconds
+    
+    #check for ties
+    if not score or "." not in score:
+        score = previous
+        print("___________________________________________________________")
+    
     previous = float(score)
     return float(score)
     
-def ScrapeField(list):
-    #iterates through td
+def Scrape_Field(list):
     for cell in list:
-        if cell.get_text(strip=True) in {"NM", "DQ", "DNF", "DNS"}:
+        if cell.get_text(strip=True) in {"NM", "DQ", "DNF", "DNS", "DNS1"}:
             return 0
         if cell.find("b"):
             return float(cell.find("b").get_text(strip=True))
     raise ValueError("No rows found in the table!")
     
-def ScrapeHighJumpVault(list):
+def Scrape_HighJump_Vault(list):
     global previousHJV
     try:
         for cell in list:
@@ -206,32 +137,28 @@ def ScrapeHighJumpVault(list):
     except:
         return previousHJV
 
-def Clean_Data():
-    df = pd.read_csv("dec_data2.csv")
-    df = df.replace(0.0, np.nan)
-    df_clean = df.dropna(how="any")
-    df_clean.to_csv("dec_data2_clean.csv")
-
 '''
  --- Functions to calculate total score ---
-I couldve put it in the scraper and scraped the last table but I didnt wanna
+I couldve put it in the scraper and scraped the last table but the table excludes nonfinishers
 '''
-def Add_Points():
-    df = pd.read_csv("dec_data2_clean.csv", index_col='Name')
+def Add_Points(df):
     points_all = []
     for index, athlete in df.iterrows():
         point = 0
+        print(athlete.Name)
         for num in range(1,11):
-            if num in {1,5,6,10}:
+            if pd.isna(athlete.iloc[num]) or athlete.iloc[num] == 0:
+                pass
+            elif num in {1,5,6,10}:
                 point = point + Calculate_Track(num,athlete.iloc[num])
             else:
-                #print(athlete.name,num,athlete.iloc[num])
                 point = point + Calculate_Field(num,athlete.iloc[num])
         points_all.append(point)
     df["Total Points"] = points_all
-    df.to_csv("dec_final_data2.csv")
+    return df
     
 def Calculate_Track(num, event_score):
+    print(num,event_score)
     if num == 1:
         A = 25.4347
         B=18
@@ -253,6 +180,7 @@ def Calculate_Track(num, event_score):
       
 def Calculate_Field(num, event_score):
     #cm
+    print(num, event_score)
     if num == 2:
         event_score = event_score * 100
         A=0.14354
@@ -286,8 +214,8 @@ def Calculate_Field(num, event_score):
     points = math.floor(A * (event_score-B) ** C)
     return points
 
-#Scrape_Wikipedia()
+Scrape_Wikipedia()
 #Clean_Data()
-Add_Points()
+#Add_Points()
 #Scrape_Wikipedia_2017()
     
